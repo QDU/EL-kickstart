@@ -1,0 +1,145 @@
+#version=OL8
+%pre
+vgchange -an
+vgremove -y $(vgs --noheadings -o vg_name | head -1)
+sgdisk -Z /dev/sda
+sgdisk -n 1:2048:+128M -t 1:EF00 -c 1:"EFI System Partition" /dev/sda
+sgdisk -n 2:0:+512M -t 2:8300 /dev/sda
+sgdisk -n 3:0:+8964M -t 3:8E00 /dev/sda
+pvcreate -Z y /dev/sda3
+vgcreate -y ol8 /dev/sda3
+lvcreate -y -n log -L 512 ol8
+lvcreate -y -n swap -L 512 ol8
+lvcreate -y -n home -L 1536 ol8
+lvcreate -y -n temp -L 1024 ol8
+lvcreate -y -n audit -L 256 ol8
+lvcreate -y -n root -L 5120 ol8
+%end
+
+part /boot/efi --fstype="efi" --ondisk=sda --fsoptions="umask=0077,shortname=winnt" --label=EFI --onpart=/dev/sda1
+part /boot --fstype="ext4" --fsoptions="nodev,nosuid" --ondisk=sda --label=BOOT --onpart=/dev/sda2
+volgroup ol8 --useexisting --noformat
+logvol /var/log --fstype=ext4 --name=log --vgname=ol8 --fsoptions="nodev,nosuid,noexec" --useexisting
+logvol swap --fstype="swap" --name=swap --vgname=ol8 --useexisting
+logvol /tmp --fstype=ext4 --name=temp --vgname=ol8 --fsoptions="nodev,nosuid,noexec" --useexisting
+logvol /var/log/audit --fstype=ext4 --name=audit --vgname=ol8 --fsoptions="nodev,nosuid,noexec" --useexisting
+logvol /home --fstype=ext4 --name=home --vgname=ol8 --fsoptions="nodev" --useexisting
+logvol / --fstype="xfs" --name=root --vgname=ol8 --useexisting
+
+text
+repo --name="appstream" --baseurl=http://yum.oracle.com/repo/OracleLinux/OL8/appstream/x86_64
+repo --name="uekr6" --baseurl=http://yum.oracle.com/repo/OracleLinux/OL8/UEKR6/x86_64
+repo --name="baseos" --baseurl=http://yum.oracle.com/repo/OracleLinux/OL8/baseos/latest/x86_64
+repo --name="epel8" --baseurl=https://dl.fedoraproject.org/pub/epel/8/Everything/x86_64
+url --url="http://yum.oracle.com/repo/OracleLinux/OL8/3/baseos/base/x86_64"
+
+# Keyboard layouts
+keyboard --vckeymap=us --xlayouts='us'
+# System language
+lang en_US.utf8 --addsupport=zh_CN.utf8
+network  --bootproto=dhcp --device=eth0 --ipv6=auto --activate
+network  --hostname=oraclelinux8-template.example.com
+
+# Run the Setup Agent on first boot
+firstboot --disable
+# System services
+services --enabled="chronyd"
+# System timezone
+timezone Etc/UTC --isUtc
+bootloader --location=mbr --append="biosdevname=0 net.ifnames=0 audit=1 audit_backlog_limit=8192 slub_debug=P page_poison=1 vsyscall=none" --password="grubrootpass"
+selinux --permissive
+
+rootpw --lock
+#
+# The selected profile will restrict root login
+# Add a user that can login and escalate privileges
+# Plaintext password is: admin123
+user --name=admin --groups=wheel --password=$6$Ga6ZnIlytrWpuCzO$q0LqT1USHpahzUafQM9jyHCY9BiE5/ahXLNWUMiVQnFGblu0WWGZ1e6icTaCGO4GNgZNtspp1Let/qpM7FMVB0 --iscrypted -gecos="XXU Linux Admin"
+
+skipx
+
+%packages --excludeWeakdeps --excludedocs
+@Core --nodefaults
+cracklib-dicts
+dnf-plugins-core
+dracut-config-generic
+dracut-config-rescue
+epel-release
+kernel-uek
+libsysfs
+mtr
+NetworkManager
+NetworkManager-tui
+NetworkManager-config-server
+net-tools
+open-vm-tools
+perl-File-Temp
+python3-libselinux
+wget
+yum-utils
+-authselect
+-biosdevname
+-btrfs-progs
+-dnf-plugin-spacewalk
+-initial-setup
+-iwl*
+-kernel
+-kernel-core
+-kernel-tools
+-kexec-tools
+-man-db
+-microcode_ctl
+-nvme-cli
+-nvmetcli
+-plymouth*
+-rhn*
+-sg3*
+%end
+
+%addon com_redhat_kdump --disable --reserve-mb='auto'
+%end
+
+%addon org_fedora_oscap
+  content-type = scap-security-guide
+  profile = xccdf_org.ssgproject.content_profile_standard
+%end
+
+%post
+passwd -e admin
+chcon -t passwd_file_t /etc/security/opasswd
+
+cat <<EOF > /etc/issue
+
+================================== W A R N I N G ==================================
+    You are accessing a XXXX University (XXU) Information System (IS),
+    that is provided for XXU-authorized use only.
+    By using this IS (which includes any device attached to this IS),
+    you consent to the following conditions:
+
+    * Communications using, or data stored on, this IS are not private,
+    are subject to routine monitoring, interception, and search,
+    and may be disclosed or used for any XXU-authorized purpose.
+
+    * This IS includes security measures (e.g., authentication and access controls)
+    to protect XXU interests, __NOT__ for your personal benefit or privacy.
+
+    * All activities performed on this device are logged and violations
+    of this policy may result in disciplinary action.
+================================== W A R N I N G ==================================
+
+\S
+Kernel \r on an \m
+
+EOF
+
+#rm -rf /etc/sysconfig/network-scripts/*
+%end
+
+%anaconda
+pwpolicy root --minlen=6 --minquality=1 --notstrict --nochanges --notempty
+pwpolicy user --minlen=6 --minquality=1 --notstrict --nochanges --emptyok
+pwpolicy luks --minlen=6 --minquality=1 --notstrict --nochanges --notempty
+%end
+
+poweroff
+
